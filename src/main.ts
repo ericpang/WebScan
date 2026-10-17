@@ -3,15 +3,27 @@ import { TARGET_PRESETS } from './core/presets';
 import { runSecurityAudit } from './core/scanner';
 import { OWASP_TOP_10_2025 } from './core/owasp-data';
 import { ASVS_5_REQUIREMENTS } from './core/asvs-data';
+import { NODE_AUDIT_PRESETS, auditCustomNodeCode, formatNodeAuditToMarkdown } from './core/nodejs-auditor';
 import { validateScanTargetUrl } from './utils/ssrf-validator';
 import { generateExecutivePdfReport } from './utils/pdf-generator';
-import { ScanResult, Severity } from './types/security';
+import { ScanResult, Severity, NodeAuditAnalysis, SecurityFinding } from './types/security';
 
 // State Management
 let currentResult: ScanResult = TARGET_PRESETS[0].result;
-let currentTab: 'overview' | 'headers' | 'owasp' | 'asvs' = 'overview';
+let currentTab: 'overview' | 'headers' | 'owasp' | 'asvs' | 'node-audit' = 'overview';
 let activeSeverityFilter: Severity | 'ALL' = 'ALL';
 let isAuditing = false;
+
+// Node.js Security Auditor State
+let currentNodeAudit: NodeAuditAnalysis = NODE_AUDIT_PRESETS[0];
+let nodeAuditMode: 'presets' | 'custom' = 'presets';
+let customFramework: 'Express' | 'Fastify' | 'NestJS' | 'Mongoose' | 'Node.js Core' = 'Express';
+let customCodeInput = `// Paste your Node.js endpoint or middleware here:
+app.post('/api/user/merge', (req, res) => {
+  const target = {};
+  Object.assign(target, req.body);
+  res.json({ updated: target });
+});`;
 
 // DOM Mount Point
 const app = document.getElementById('app')!;
@@ -44,6 +56,9 @@ function renderApp() {
           </button>
           <button class="nav-item ${currentTab === 'asvs' ? 'active' : ''}" data-tab="asvs">
             <span>📜 ASVS 5.0 Explorer</span>
+          </button>
+          <button class="nav-item ${currentTab === 'node-audit' ? 'active' : ''}" data-tab="node-audit">
+            <span>⚡ Node.js Auditor <span style="font-size: 0.65rem; background: #10b981; color: #000; padding: 1px 5px; border-radius: 4px; font-weight: 800; margin-left: 2px;">4-TIER</span></span>
           </button>
         </nav>
 
@@ -97,14 +112,27 @@ function renderApp() {
         <div id="ssrf-error-message" style="display: none; margin-top: 10px; color: #f87171; font-size: 0.85rem; font-weight: 500;"></div>
 
         <!-- Presets Bar -->
-        <div class="presets-group">
-          <span class="presets-label">Preset Targets:</span>
-          ${TARGET_PRESETS.map(preset => `
-            <button class="preset-chip ${preset.url === currentResult.targetUrl ? 'active' : ''}" data-preset-id="${preset.id}">
-              <span>${preset.name}</span>
-              <small style="opacity: 0.7;">(${preset.badge})</small>
-            </button>
-          `).join('')}
+        <div class="presets-section" style="margin-top: 18px; display: flex; flex-direction: column; gap: 8px;">
+          <div class="presets-group" style="margin-top: 0;">
+            <span class="presets-label">🏢 Enterprise Baselines:</span>
+            ${TARGET_PRESETS.filter(p => p.category !== 'owasp').map(preset => `
+              <button class="preset-chip ${preset.url === currentResult.targetUrl ? 'active' : ''}" data-preset-id="${preset.id}">
+                <span>${preset.name}</span>
+                <small style="opacity: 0.7;">(${preset.badge})</small>
+              </button>
+            `).join('')}
+          </div>
+
+          <div class="presets-group" style="margin-top: 2px;">
+            <span class="presets-label" style="color: #60a5fa; font-weight: 600;">🧪 OWASP Demo Websites:</span>
+            ${TARGET_PRESETS.filter(p => p.category === 'owasp').map(preset => `
+              <button class="preset-chip owasp-chip ${preset.url === currentResult.targetUrl ? 'active' : ''}" data-preset-id="${preset.id}">
+                <span class="owasp-tag-mini">OWASP</span>
+                <span>${preset.name}</span>
+                <small style="opacity: 0.85; color: #fca5a5;">(${preset.badge})</small>
+              </button>
+            `).join('')}
+          </div>
         </div>
       </section>
 
@@ -146,6 +174,8 @@ function renderCurrentTab() {
       return renderOwaspTab();
     case 'asvs':
       return renderAsvsTab();
+    case 'node-audit':
+      return renderNodeAuditTab();
   }
 }
 
@@ -426,6 +456,303 @@ function renderAsvsTab() {
   `;
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function addNodeFindingToScanResult(analysis: NodeAuditAnalysis) {
+  const existing = currentResult.findings.find(f => f.id === analysis.id);
+  if (existing) {
+    alert('This Node.js vulnerability finding is already included in your active scan posture.');
+    return;
+  }
+
+  const newFinding: SecurityFinding = {
+    id: analysis.id,
+    title: `[${analysis.framework}] ${analysis.vulnerabilityName}`,
+    severity: analysis.severity,
+    owaspCategory: analysis.owaspId,
+    asvsId: analysis.asvsId,
+    cwe: analysis.cwe,
+    passed: false,
+    description: `${analysis.description}\n\nRuntime Root Cause: ${analysis.rootCause}`,
+    impact: analysis.impact,
+    remediation: `${analysis.remediation.guidance}\n\nRecommended Ecosystem Packages: ${analysis.remediation.ecosystemPackages.map(p => p.name).join(', ')}`,
+    codeSnippet: {
+      language: 'typescript',
+      vulnerable: analysis.remediation.vulnerableCode,
+      remediated: analysis.remediation.remediatedCode
+    }
+  };
+
+  currentResult.findings.unshift(newFinding);
+  if (analysis.severity === 'CRITICAL') currentResult.summary.critical++;
+  else if (analysis.severity === 'HIGH') currentResult.summary.high++;
+  else if (analysis.severity === 'MEDIUM') currentResult.summary.medium++;
+  else if (analysis.severity === 'LOW') currentResult.summary.low++;
+
+  const penalty = analysis.severity === 'CRITICAL' ? 18 : analysis.severity === 'HIGH' ? 12 : 6;
+  currentResult.score = Math.max(15, currentResult.score - penalty);
+  if (currentResult.score >= 90) currentResult.grade = 'A';
+  else if (currentResult.score >= 80) currentResult.grade = 'B';
+  else if (currentResult.score >= 65) currentResult.grade = 'C';
+  else if (currentResult.score >= 50) currentResult.grade = 'D';
+  else currentResult.grade = 'F';
+
+  alert(`Merged "${analysis.vulnerabilityName}" into active scan posture!\nNew Posture Rating: ${currentResult.score}% (${currentResult.grade}). You can now review it in Posture Overview or export via PDF.`);
+  renderApp();
+}
+
+function renderNodeAuditTab() {
+  const activePreset = currentNodeAudit;
+
+  return `
+    <div class="node-auditor-wrapper">
+      <!-- Ethical Pentest Header Banner -->
+      <section class="glass-panel node-header-banner">
+        <div class="node-title-group">
+          <div class="node-mandate-badge">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"/></svg>
+            <span>Ethical Pentest &amp; Defensive Mandate</span>
+          </div>
+          <h2>Node.js Web Application Security Auditor</h2>
+          <p>
+            Certified defensive auditing for the Node.js ecosystem (Express, Fastify, NestJS, Mongoose). Mapped strictly to <strong>OWASP Top 10:2025</strong> and <strong>ASVS 5.0</strong> verification requirements with 4-tier structured reporting.
+          </p>
+        </div>
+
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <div class="filter-pills">
+            <button class="filter-pill ${nodeAuditMode === 'presets' ? 'active' : ''}" id="btn-mode-presets">
+              📚 Curated Scenarios
+            </button>
+            <button class="filter-pill ${nodeAuditMode === 'custom' ? 'active' : ''}" id="btn-mode-custom">
+              🔬 Custom Code Audit
+            </button>
+          </div>
+          <button id="btn-copy-node-md" class="btn">
+            <span>📋 Copy 4-Tier Report</span>
+          </button>
+          <button id="btn-merge-to-findings" class="btn btn-primary">
+            <span>➕ Add to Scan Posture</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Presets or Custom Code Mode Area -->
+      ${nodeAuditMode === 'presets' ? `
+        <section class="node-scenarios-bar">
+          <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em;">
+            Select Real-World Node.js Scenario:
+          </div>
+          <div class="scenario-chips-row">
+            ${NODE_AUDIT_PRESETS.map(preset => {
+              const tagClass = 'tag-' + preset.framework.toLowerCase().replace(/[^a-z]/g, '');
+              const isActive = preset.id === activePreset.id;
+              return `
+                <button class="scenario-chip ${isActive ? 'active' : ''}" data-node-preset-id="${preset.id}">
+                  <span class="framework-tag ${tagClass}">${preset.framework}</span>
+                  <span>${preset.scenarioName.split('—')[1]?.trim() || preset.scenarioName}</span>
+                </button>
+              `;
+            }).join('')}
+          </div>
+        </section>
+      ` : `
+        <section class="custom-code-box">
+          <div class="custom-code-header">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span style="font-size: 0.82rem; font-weight: 600; color: var(--text-tertiary); text-transform: uppercase;">
+                Target Framework:
+              </span>
+              <select id="custom-framework-select" class="scan-input" style="padding: 6px 12px; width: auto; font-size: 0.82rem;">
+                <option value="Express" ${customFramework === 'Express' ? 'selected' : ''}>Express.js</option>
+                <option value="Fastify" ${customFramework === 'Fastify' ? 'selected' : ''}>Fastify</option>
+                <option value="NestJS" ${customFramework === 'NestJS' ? 'selected' : ''}>NestJS</option>
+                <option value="Mongoose" ${customFramework === 'Mongoose' ? 'selected' : ''}>Mongoose / MongoDB</option>
+                <option value="Node.js Core" ${customFramework === 'Node.js Core' ? 'selected' : ''}>Node.js Core / HTTP</option>
+              </select>
+            </div>
+            <button id="btn-run-custom-node-audit" class="btn btn-primary">
+              <span>▶️ Run Static Vulnerability Audit</span>
+            </button>
+          </div>
+          <textarea id="custom-code-editor" class="custom-code-textarea" placeholder="Paste your Node.js controller, route, or middleware code here...">${customCodeInput}</textarea>
+        </section>
+      `}
+
+      <!-- 4-Tier Ethical Pentest Response Structure -->
+      <section class="audit-output-wrapper">
+        <!-- Tier 1: 🔍 Vulnerability Identification & Mapping -->
+        <div class="tier-card">
+          <div class="tier-header">
+            <div class="tier-title-group">
+              <div class="tier-number-badge">1</div>
+              <div class="tier-title">
+                <span>🔍 Vulnerability Identification &amp; Mapping</span>
+              </div>
+            </div>
+            <span class="header-badge warning" style="font-size: 0.75rem;">Node.js Runtime Scope</span>
+          </div>
+
+          <div style="margin-top: 4px;">
+            <h3 style="font-size: 1.25rem; font-weight: 700; color: #fff; margin-bottom: 6px;">
+              ${activePreset.vulnerabilityName}
+            </h3>
+            <p style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.6;">
+              ${activePreset.description}
+            </p>
+          </div>
+
+          <div class="detail-section" style="margin-top: 14px;">
+            <div class="detail-label">Node.js Runtime Root Cause</div>
+            <div class="detail-body" style="color: #cbd5e1; font-family: var(--font-family-mono); font-size: 0.82rem; background: rgba(10, 14, 22, 0.7); padding: 10px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              ⚙️ ${activePreset.rootCause}
+            </div>
+          </div>
+
+          <div class="mapping-chips-row">
+            <div class="mapping-chip mapping-owasp">
+              <span>📋 OWASP Top 10:</span>
+              <span>${activePreset.owaspId}</span>
+            </div>
+            <div class="mapping-chip mapping-asvs">
+              <span>📜 ASVS 5.0:</span>
+              <span>${activePreset.asvsId}</span>
+            </div>
+            <div class="mapping-chip mapping-cwe">
+              <span>🛡️ CWE:</span>
+              <span>${activePreset.cwe}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tier 2: ⚠️ Risk Assessment -->
+        <div class="tier-card">
+          <div class="tier-header">
+            <div class="tier-title-group">
+              <div class="tier-number-badge">2</div>
+              <div class="tier-title">
+                <span>⚠️ Risk Assessment</span>
+              </div>
+            </div>
+            <span style="font-size: 0.78rem; color: var(--text-tertiary);">Runtime blast radius &amp; single-thread impact</span>
+          </div>
+
+          <div class="risk-grid">
+            <div class="risk-impact-box">
+              <div class="detail-label" style="color: #fca5a5;">Runtime Exploit Impact</div>
+              <div style="margin-top: 6px; color: #e2e8f0; font-size: 0.92rem; line-height: 1.55;">${activePreset.impact}</div>
+            </div>
+
+            <div class="severity-meter-box">
+              <div class="detail-label">Assigned Severity</div>
+              <div class="severity-pill-large sev-${activePreset.severity}">
+                ${activePreset.severity}
+              </div>
+              <div style="font-size: 0.72rem; color: var(--text-tertiary); margin-top: 4px;">
+                CVSS v3.1 Defensive Rating
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tier 3: 💻 Proof of Concept (Conceptual) -->
+        <div class="tier-card">
+          <div class="tier-header">
+            <div class="tier-title-group">
+              <div class="tier-number-badge">3</div>
+              <div class="tier-title">
+                <span>💻 Proof of Concept (Conceptual)</span>
+              </div>
+            </div>
+            <span class="header-badge passed" style="font-size: 0.72rem;">Safe Abstract Model</span>
+          </div>
+
+          <div class="poc-safety-notice">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+            <span><strong>Safety Boundary:</strong> ${activePreset.pocConceptual.behaviorNote}</span>
+          </div>
+
+          <div style="margin-bottom: 10px;">
+            <h4 style="font-size: 0.95rem; font-weight: 600; color: #e2e8f0; margin-bottom: 4px;">
+              ${activePreset.pocConceptual.title}
+            </h4>
+            <p style="font-size: 0.85rem; color: var(--text-secondary);">
+              ${activePreset.pocConceptual.description}
+            </p>
+          </div>
+
+          <div class="poc-code-display">${escapeHtml(activePreset.pocConceptual.payloadExample)}</div>
+        </div>
+
+        <!-- Tier 4: 🛡️ Remediation & Secure Coding -->
+        <div class="tier-card">
+          <div class="tier-header">
+            <div class="tier-title-group">
+              <div class="tier-number-badge">4</div>
+              <div class="tier-title">
+                <span>🛡️ Remediation &amp; Secure Coding</span>
+              </div>
+            </div>
+            <button id="btn-copy-remediated-code" class="btn" style="padding: 4px 10px; font-size: 0.75rem;">
+              <span>📋 Copy Remediated Code</span>
+            </button>
+          </div>
+
+          <div>
+            <div class="detail-label" style="color: #6ee7b7;">Node.js Controls &amp; Implementation Guidance</div>
+            <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.55; margin-top: 4px;">
+              ${activePreset.remediation.guidance}
+            </p>
+          </div>
+
+          <!-- Code Diff Comparison -->
+          <div class="remediation-diff-container">
+            <div class="diff-pane diff-pane-vulnerable">
+              <div class="diff-pane-title">
+                <span>❌ Vulnerable Implementation</span>
+                <span style="font-size: 0.7rem; opacity: 0.8;">Node.js / ${activePreset.framework}</span>
+              </div>
+              <div class="diff-code-body">${escapeHtml(activePreset.remediation.vulnerableCode)}</div>
+            </div>
+
+            <div class="diff-pane diff-pane-remediated">
+              <div class="diff-pane-title">
+                <span>✅ Remediated &amp; Hardened</span>
+                <span style="font-size: 0.7rem; opacity: 0.8;">ASVS 5.0 Compliant</span>
+              </div>
+              <div class="diff-code-body">${escapeHtml(activePreset.remediation.remediatedCode)}</div>
+            </div>
+          </div>
+
+          <!-- Ecosystem Solutions (npm packages) -->
+          <div class="ecosystem-section">
+            <div class="detail-label" style="color: #93c5fd;">Recommended Ecosystem Solutions (npm packages)</div>
+            <div class="ecosystem-grid">
+              ${activePreset.remediation.ecosystemPackages.map(pkg => `
+                <div class="ecosystem-card">
+                  <div class="ecosystem-pkg-name">${pkg.name}</div>
+                  <div class="ecosystem-pkg-role">${pkg.role}</div>
+                  <div class="ecosystem-cmd-row">
+                    <span class="ecosystem-cmd">${pkg.npmInstall}</span>
+                    <button class="btn-copy-sm" data-copy-cmd="${pkg.npmInstall}" title="Copy install command">📋</button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function attachEventListeners() {
   // Navigation Tabs
   document.querySelectorAll('.nav-item').forEach(button => {
@@ -578,6 +905,86 @@ function attachEventListeners() {
     a.click();
     URL.revokeObjectURL(url);
   });
+
+  // Node.js Auditor Mode Switcher
+  document.getElementById('btn-mode-presets')?.addEventListener('click', () => {
+    nodeAuditMode = 'presets';
+    renderApp();
+  });
+
+  document.getElementById('btn-mode-custom')?.addEventListener('click', () => {
+    nodeAuditMode = 'custom';
+    renderApp();
+  });
+
+  // Preset Scenario Clicks
+  document.querySelectorAll('[data-node-preset-id]').forEach(chip => {
+    chip.addEventListener('click', (e) => {
+      const id = (e.currentTarget as HTMLElement).getAttribute('data-node-preset-id');
+      const found = NODE_AUDIT_PRESETS.find(p => p.id === id);
+      if (found) {
+        currentNodeAudit = found;
+        renderApp();
+      }
+    });
+  });
+
+  // Custom Framework and Textarea Tracking
+  const frameworkSelect = document.getElementById('custom-framework-select') as HTMLSelectElement;
+  frameworkSelect?.addEventListener('change', () => {
+    customFramework = frameworkSelect.value as any;
+  });
+
+  const customTextarea = document.getElementById('custom-code-editor') as HTMLTextAreaElement;
+  customTextarea?.addEventListener('input', () => {
+    customCodeInput = customTextarea.value;
+  });
+
+  // Run Custom Node Audit
+  document.getElementById('btn-run-custom-node-audit')?.addEventListener('click', () => {
+    const code = customTextarea ? customTextarea.value : customCodeInput;
+    const fw = frameworkSelect ? frameworkSelect.value : customFramework;
+    if (!code.trim()) {
+      alert('Please enter or paste Node.js code to audit.');
+      return;
+    }
+    customCodeInput = code;
+    customFramework = fw as any;
+    currentNodeAudit = auditCustomNodeCode(code, fw);
+    renderApp();
+  });
+
+  // Copy 4-Tier Markdown Report
+  document.getElementById('btn-copy-node-md')?.addEventListener('click', () => {
+    const md = formatNodeAuditToMarkdown(currentNodeAudit);
+    navigator.clipboard.writeText(md).then(() => {
+      alert('4-Tier Node.js Security Audit Report copied to clipboard!');
+    });
+  });
+
+  // Copy Remediated Code
+  document.getElementById('btn-copy-remediated-code')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(currentNodeAudit.remediation.remediatedCode).then(() => {
+      alert('Remediated code copied to clipboard!');
+    });
+  });
+
+  // Copy npm install commands
+  document.querySelectorAll('[data-copy-cmd]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const cmd = (e.currentTarget as HTMLElement).getAttribute('data-copy-cmd');
+      if (cmd) {
+        navigator.clipboard.writeText(cmd).then(() => {
+          alert(`Copied "${cmd}" to clipboard!`);
+        });
+      }
+    });
+  });
+
+  // Merge Node.js Finding into Active Scan Posture
+  document.getElementById('btn-merge-to-findings')?.addEventListener('click', () => {
+    addNodeFindingToScanResult(currentNodeAudit);
+  });
 }
 
 function generateMarkdownReport(result: ScanResult): string {
@@ -617,6 +1024,17 @@ ${result.findings.map(f => `
 | Header | Status | Current Value | Recommended |
 |---|---|---|---|
 ${result.headerAudits.map(h => `| ${h.header} | ${h.status.toUpperCase()} | \`${h.currentValue || 'None'}\` | \`${h.recommendedValue}\` |`).join('\n')}
+
+---
+
+## 4. Active Node.js Security Finding (4-Tier Analysis)
+- **Scenario**: ${currentNodeAudit.scenarioName}
+- **Framework**: ${currentNodeAudit.framework}
+- **Vulnerability**: ${currentNodeAudit.vulnerabilityName} (${currentNodeAudit.severity})
+- **Root Cause**: ${currentNodeAudit.rootCause}
+- **OWASP**: ${currentNodeAudit.owaspId} | **ASVS**: ${currentNodeAudit.asvsId} | **CWE**: ${currentNodeAudit.cwe}
+- **Impact**: ${currentNodeAudit.impact}
+- **Ecosystem Solutions**: ${currentNodeAudit.remediation.ecosystemPackages.map(p => p.name).join(', ')}
 `;
 }
 

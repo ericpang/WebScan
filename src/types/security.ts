@@ -51,9 +51,43 @@ export interface ScanResult {
   asvsLevel2PassRate: number;
 }
 
+export interface NodeAuditAnalysis {
+  id: string;
+  scenarioName: string;
+  framework: 'Express' | 'Fastify' | 'NestJS' | 'Node.js Core' | 'Mongoose' | 'Prisma';
+  vulnerabilityName: string;
+  description: string;
+  rootCause: string;
+  owaspId: string;
+  asvsId: string;
+  cwe: string;
+  impact: string;
+  severity: Severity;
+  pocConceptual: {
+    title: string;
+    description: string;
+    payloadExample: string;
+    behaviorNote: string;
+  };
+  remediation: {
+    guidance: string;
+    vulnerableCode: string;
+    remediatedCode: string;
+    ecosystemPackages: {
+      name: string;
+      npmInstall: string;
+      role: string;
+    }[];
+  };
+}
+
 export interface TargetPreset {
+  id: string;
   name: string;
   url: string;
+  category?: 'owasp' | 'enterprise';
+  aliases?: string[];
+  badge: string;
   description: string;
-  defaultResult: Partial<ScanResult>;
+  result: ScanResult;
 }

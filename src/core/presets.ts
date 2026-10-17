@@ -1,19 +1,13 @@
-import { ScanResult } from '../types/security';
+import type { TargetPreset } from '../types/security';
 
-export interface TargetPreset {
-  id: string;
-  name: string;
-  url: string;
-  badge: string;
-  description: string;
-  result: ScanResult;
-}
+export type { TargetPreset };
 
 export const TARGET_PRESETS: TargetPreset[] = [
   {
     id: 'hardened-cloud',
     name: 'Hardened Cloud API Gateway',
     url: 'https://api.secureguard.cloud',
+    category: 'enterprise',
     badge: 'Grade A+ (96%)',
     description: 'A fully fortified modern enterprise service with strict CSP, HSTS with preloading, and complete ASVS Level 2 alignment.',
     result: {
@@ -134,6 +128,7 @@ export const TARGET_PRESETS: TargetPreset[] = [
     id: 'legacy-portal',
     name: 'Legacy Enterprise Web App',
     url: 'https://legacy-portal.internal-net.com',
+    category: 'enterprise',
     badge: 'Grade D (48%)',
     description: 'An aging corporate web portal suffering from missing security headers, unsafe cookies, and unvalidated URL parameters.',
     result: {
@@ -277,6 +272,7 @@ export const TARGET_PRESETS: TargetPreset[] = [
     id: 'modern-ecommerce',
     name: 'E-Commerce Checkout API',
     url: 'https://store.hyperretail.io',
+    category: 'enterprise',
     badge: 'Grade B (78%)',
     description: 'Modern storefront with solid transport security and CSRF defense, but missing fine-grained Referrer and Permissions policies.',
     result: {
@@ -383,6 +379,484 @@ export const TARGET_PRESETS: TargetPreset[] = [
       ],
       asvsLevel1PassRate: 88,
       asvsLevel2PassRate: 68
+    }
+  },
+  {
+    id: 'owasp-juice-shop',
+    name: 'OWASP Juice Shop (Live Demo)',
+    url: 'https://juice-shop.herokuapp.com',
+    aliases: ['https://demo.owasp-juice.shop', 'http://juice-shop.herokuapp.com', 'https://juice-shop.herokuapp.com/'],
+    category: 'owasp',
+    badge: 'OWASP Flagship (52%)',
+    description: 'The official OWASP flagship vulnerable web application built on Node.js, Express, and Angular. Intentionally insecure for security training and auditing.',
+    result: {
+      targetUrl: 'https://juice-shop.herokuapp.com',
+      timestamp: new Date().toISOString(),
+      score: 52,
+      grade: 'D',
+      summary: {
+        critical: 2,
+        high: 3,
+        medium: 3,
+        low: 1,
+        info: 1,
+        totalPassed: 11
+      },
+      findings: [
+        {
+          id: 'JS-01',
+          title: 'Permissive Cross-Origin Resource Sharing (CORS Wildcard with Credentials)',
+          severity: 'CRITICAL',
+          owaspCategory: 'A01:2025 - Broken Access Control & SSRF',
+          asvsId: '14.5.3',
+          cwe: 'CWE-942',
+          passed: false,
+          description: 'The API responds with "Access-Control-Allow-Origin: *" combined with allowing authenticated sessions, permitting malicious origins to read user basket data.',
+          impact: 'Cross-origin scripts running in visitor browsers can read private shopping cart data and authentication status.',
+          remediation: 'Restrict allowed origins to an explicit trusted allowlist and never combine wildcard origins with credentials.',
+          codeSnippet: {
+            language: 'javascript',
+            vulnerable: "// Vulnerable Express CORS setup\napp.use(cors({ origin: '*', credentials: true }));",
+            remediated: "import cors from 'cors';\nconst ALLOWLIST = ['https://juice-shop.herokuapp.com'];\napp.use(cors({ origin: ALLOWLIST, credentials: true }));"
+          }
+        },
+        {
+          id: 'JS-02',
+          title: "Permissive CSP Script Directives ('unsafe-inline' & 'unsafe-eval')",
+          severity: 'HIGH',
+          owaspCategory: 'A02:2025 - Security Misconfiguration',
+          asvsId: '1.2.1',
+          cwe: 'CWE-79',
+          passed: false,
+          description: 'Content-Security-Policy contains "unsafe-inline" and "unsafe-eval" to accommodate legacy Angular client template bindings.',
+          impact: 'Negates core XSS defense protections, allowing stored and reflected script injection to execute within client browsers.',
+          remediation: 'Deploy nonce-based script source restrictions and upgrade Angular templates to ahead-of-time (AOT) compilation without eval.',
+          codeSnippet: {
+            language: 'http',
+            vulnerable: "Content-Security-Policy: default-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';",
+            remediated: "Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-R4nd0m123'; object-src 'none'; base-uri 'self';"
+          }
+        },
+        {
+          id: 'JS-03',
+          title: 'Missing Permissions-Policy for Browser Sensors & Device APIs',
+          severity: 'MEDIUM',
+          owaspCategory: 'A02:2025 - Security Misconfiguration',
+          asvsId: '8.3.1',
+          cwe: 'CWE-16',
+          passed: false,
+          description: 'No Permissions-Policy header is served, permitting iframed content to access client microphone, camera, and geolocation.',
+          impact: 'Embedded third-party content or iframe injections can query browser hardware features without user prompt restrictions.',
+          remediation: 'Configure Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()',
+          codeSnippet: {
+            language: 'http',
+            vulnerable: '# No Permissions-Policy header present',
+            remediated: 'Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()'
+          }
+        },
+        {
+          id: 'JS-04',
+          title: 'Short HSTS Duration & Missing Preload Directives',
+          severity: 'MEDIUM',
+          owaspCategory: 'A04:2025 - Cryptographic Failures',
+          asvsId: '12.1.1',
+          cwe: 'CWE-319',
+          passed: false,
+          description: 'Strict-Transport-Security duration is configured for only 1 day (86400 seconds) without includeSubDomains and preload.',
+          impact: 'Leaves returning visitors vulnerable to SSL-stripping MITM attacks outside of short session windows.',
+          remediation: 'Set max-age to at least 1 year (31536000 seconds) with includeSubDomains and submit to the HSTS preload list.',
+          codeSnippet: {
+            language: 'http',
+            vulnerable: 'Strict-Transport-Security: max-age=86400',
+            remediated: 'Strict-Transport-Security: max-age=31536000; includeSubDomains; preload'
+          }
+        },
+        {
+          id: 'JS-05',
+          title: 'Runtime Technology Leakage via X-Powered-By Express Header',
+          severity: 'LOW',
+          owaspCategory: 'A10:2025 - Exception Handling & Information Leakage',
+          asvsId: '16.5.1',
+          cwe: 'CWE-200',
+          passed: false,
+          description: 'HTTP response exposes "X-Powered-By: Express", confirming that the backend runs Node.js and Express.',
+          impact: 'Aids attackers in crafting targeted Node.js prototype pollution and Express middleware payloads.',
+          remediation: 'Disable the banner using app.disable("x-powered-by") or helmet().',
+          codeSnippet: {
+            language: 'javascript',
+            vulnerable: '// Express default exposes banner\nconst app = express();',
+            remediated: 'const app = express();\napp.disable("x-powered-by");'
+          }
+        }
+      ],
+      headerAudits: [
+        {
+          header: 'Content-Security-Policy',
+          status: 'warning',
+          currentValue: "default-src 'self' 'unsafe-inline' 'unsafe-eval';",
+          recommendedValue: "default-src 'self'; script-src 'self' 'nonce-...'; object-src 'none';",
+          importance: 'critical',
+          description: "Warning: Contains unsafe-inline and unsafe-eval."
+        },
+        {
+          header: 'Strict-Transport-Security (HSTS)',
+          status: 'warning',
+          currentValue: 'max-age=86400',
+          recommendedValue: 'max-age=31536000; includeSubDomains; preload',
+          importance: 'critical',
+          description: 'Warning: Short duration (1 day). Preload not declared.'
+        },
+        {
+          header: 'X-Frame-Options',
+          status: 'passed',
+          currentValue: 'SAMEORIGIN',
+          recommendedValue: 'SAMEORIGIN',
+          importance: 'high',
+          description: 'Framing permitted only from the same origin.'
+        },
+        {
+          header: 'X-Content-Type-Options',
+          status: 'passed',
+          currentValue: 'nosniff',
+          recommendedValue: 'nosniff',
+          importance: 'high',
+          description: 'MIME sniffing prevention active.'
+        },
+        {
+          header: 'Permissions-Policy',
+          status: 'missing',
+          recommendedValue: 'camera=(), microphone=(), geolocation=()',
+          importance: 'medium',
+          description: 'Missing. Client device sensors are unrestricted.'
+        },
+        {
+          header: 'Cross-Origin-Opener-Policy',
+          status: 'missing',
+          recommendedValue: 'same-origin',
+          importance: 'medium',
+          description: 'Missing. Vulnerable to cross-window Spectre side-channel attacks.'
+        }
+      ],
+      owaspCompliance: [
+        { category: 'A01 - Broken Access Control & SSRF', score: 50, status: 'warning' },
+        { category: 'A02 - Security Misconfiguration', score: 45, status: 'non-compliant' },
+        { category: 'A03 - Supply Chain Failures', score: 65, status: 'warning' },
+        { category: 'A04 - Cryptographic Failures', score: 60, status: 'warning' },
+        { category: 'A05 - Injection', score: 48, status: 'non-compliant' },
+        { category: 'A06 - Insecure Design', score: 55, status: 'warning' },
+        { category: 'A07 - Authentication Failures', score: 52, status: 'warning' },
+        { category: 'A08 - Integrity Failures', score: 58, status: 'warning' },
+        { category: 'A09 - Security Logging & Alerting', score: 40, status: 'non-compliant' },
+        { category: 'A10 - Exception Handling', score: 50, status: 'warning' }
+      ],
+      asvsLevel1PassRate: 58,
+      asvsLevel2PassRate: 34
+    }
+  },
+  {
+    id: 'owasp-nodegoat',
+    name: 'OWASP NodeGoat (Node.js Benchmark)',
+    url: 'https://nodegoat.herokuapp.com',
+    aliases: ['https://nodegoat.owasp.org', 'http://nodegoat.herokuapp.com'],
+    category: 'owasp',
+    badge: 'OWASP Node.js (38%)',
+    description: 'Official OWASP project demonstrating OWASP Top 10 vulnerabilities specifically in the Node.js / Express / MongoDB runtime environment.',
+    result: {
+      targetUrl: 'https://nodegoat.herokuapp.com',
+      timestamp: new Date().toISOString(),
+      score: 38,
+      grade: 'F',
+      summary: {
+        critical: 3,
+        high: 3,
+        medium: 2,
+        low: 2,
+        info: 1,
+        totalPassed: 7
+      },
+      findings: [
+        {
+          id: 'NG-01',
+          title: 'Server-Side JavaScript Code Injection via eval()',
+          severity: 'CRITICAL',
+          owaspCategory: 'A08:2025 - Software and Data Integrity Failures',
+          asvsId: '5.5.1',
+          cwe: 'CWE-95',
+          passed: false,
+          description: 'User contributions and retirement allocation calculations evaluate user input dynamically using eval(), permitting arbitrary code execution on the Node host process.',
+          impact: 'Complete server compromise, reverse shell spawning, host file system tampering, and database secret extraction.',
+          remediation: 'Eliminate eval() calls completely. Use dedicated expression parsers or sandboxed mathematical libraries like mathjs.',
+          codeSnippet: {
+            language: 'javascript',
+            vulnerable: '// Insecure dynamic allocation calculation\nconst total = eval(req.body.preTax + " + " + req.body.roth);',
+            remediated: 'import { evaluate } from "mathjs";\n// Safe expression parsing without process access\nconst total = evaluate(`${Number(req.body.preTax)} + ${Number(req.body.roth)}`);'
+          }
+        },
+        {
+          id: 'NG-02',
+          title: 'NoSQL Query Selector Injection in Authentication Flow',
+          severity: 'CRITICAL',
+          owaspCategory: 'A05:2025 - Injection',
+          asvsId: '5.3.4',
+          cwe: 'CWE-943',
+          passed: false,
+          description: 'Login endpoint passes raw request body directly into MongoDB findOne() query, allowing attackers to inject {"$ne": null} operators to bypass authentication.',
+          impact: 'Authentication bypass enabling unauthenticated administrative access without valid credentials.',
+          remediation: 'Sanitize incoming payloads with mongo-sanitize and validate that fields are strictly string primitives with Zod.',
+          codeSnippet: {
+            language: 'javascript',
+            vulnerable: 'db.users.findOne({ userName: req.body.userName, password: req.body.password });',
+            remediated: 'import mongoSanitize from "mongo-sanitize";\nconst cleanBody = mongoSanitize(req.body);\ndb.users.findOne({ userName: String(cleanBody.userName) });'
+          }
+        },
+        {
+          id: 'NG-03',
+          title: 'Prototype Pollution via Unsafe Parameter Deep Copy',
+          severity: 'HIGH',
+          owaspCategory: 'A03:2025 - Supply Chain Failures & Memory Safety',
+          asvsId: '5.1.4',
+          cwe: 'CWE-1321',
+          passed: false,
+          description: 'Profile updates utilize a recursive merge without sanitizing __proto__ or constructor keys, polluting the V8 Object prototype chain.',
+          impact: 'Alters default object properties across the Node.js application, potentially bypassing authorization checks.',
+          remediation: 'Reject magic property keys and validate schemas with Ajv or Zod.',
+          codeSnippet: {
+            language: 'javascript',
+            vulnerable: 'function merge(target, src) {\n  for (let k in src) target[k] = src[k];\n}',
+            remediated: 'import Ajv from "ajv";\nconst ajv = new Ajv({ removeAdditional: "all" });\n// Schema strictly rejects prototype keys'
+          }
+        },
+        {
+          id: 'NG-04',
+          title: 'Complete Omission of Helmet Defensive HTTP Headers',
+          severity: 'HIGH',
+          owaspCategory: 'A02:2025 - Security Misconfiguration',
+          asvsId: '1.1.1',
+          cwe: 'CWE-16',
+          passed: false,
+          description: 'The Express application runs without defensive security headers (no CSP, no X-Frame-Options, no HSTS, no X-Content-Type-Options).',
+          impact: 'Exposes application to XSS execution, Clickjacking, MIME-sniffing, and MITM transport downgrade.',
+          remediation: 'Deploy helmet() as the first top-level Express middleware.',
+          codeSnippet: {
+            language: 'javascript',
+            vulnerable: 'const app = express();\n// No security headers configured',
+            remediated: 'import helmet from "helmet";\nconst app = express();\napp.use(helmet());'
+          }
+        },
+        {
+          id: 'NG-05',
+          title: 'Insecure Session Cookie Configuration (Missing HttpOnly & SameSite)',
+          severity: 'MEDIUM',
+          owaspCategory: 'A07:2025 - Authentication Failures',
+          asvsId: '3.4.1',
+          cwe: 'CWE-614',
+          passed: false,
+          description: 'Session cookie "connect.sid" is issued without HttpOnly and SameSite flags.',
+          impact: 'Enables credential theft through XSS and exposes sessions to CSRF state tampering.',
+          remediation: 'Configure express-session with httpOnly: true, secure: true, and sameSite: "strict".',
+          codeSnippet: {
+            language: 'javascript',
+            vulnerable: 'app.use(session({ secret: "keyboard cat" }));',
+            remediated: 'app.use(session({\n  secret: process.env.SESSION_SECRET,\n  cookie: { httpOnly: true, secure: true, sameSite: "strict" }\n}));'
+          }
+        }
+      ],
+      headerAudits: [
+        {
+          header: 'Content-Security-Policy',
+          status: 'missing',
+          recommendedValue: "default-src 'self'; frame-ancestors 'none';",
+          importance: 'critical',
+          description: 'Missing. High risk of XSS execution.'
+        },
+        {
+          header: 'Strict-Transport-Security (HSTS)',
+          status: 'missing',
+          recommendedValue: 'max-age=31536000; includeSubDomains',
+          importance: 'critical',
+          description: 'Missing. Unprotected against protocol downgrade.'
+        },
+        {
+          header: 'X-Frame-Options',
+          status: 'missing',
+          recommendedValue: 'DENY',
+          importance: 'high',
+          description: 'Missing. Vulnerable to clickjacking.'
+        },
+        {
+          header: 'X-Content-Type-Options',
+          status: 'missing',
+          recommendedValue: 'nosniff',
+          importance: 'high',
+          description: 'Missing. MIME sniffing permitted.'
+        },
+        {
+          header: 'Permissions-Policy',
+          status: 'missing',
+          recommendedValue: 'camera=(), microphone=()',
+          importance: 'medium',
+          description: 'Missing hardware feature constraints.'
+        }
+      ],
+      owaspCompliance: [
+        { category: 'A01 - Broken Access Control & SSRF', score: 35, status: 'non-compliant' },
+        { category: 'A02 - Security Misconfiguration', score: 30, status: 'non-compliant' },
+        { category: 'A03 - Supply Chain Failures', score: 40, status: 'non-compliant' },
+        { category: 'A04 - Cryptographic Failures', score: 45, status: 'non-compliant' },
+        { category: 'A05 - Injection', score: 25, status: 'non-compliant' },
+        { category: 'A06 - Insecure Design', score: 35, status: 'non-compliant' },
+        { category: 'A07 - Authentication Failures', score: 40, status: 'non-compliant' },
+        { category: 'A08 - Integrity Failures', score: 30, status: 'non-compliant' },
+        { category: 'A09 - Security Logging & Alerting', score: 30, status: 'non-compliant' },
+        { category: 'A10 - Exception Handling', score: 45, status: 'non-compliant' }
+      ],
+      asvsLevel1PassRate: 42,
+      asvsLevel2PassRate: 18
+    }
+  },
+  {
+    id: 'owasp-webgoat',
+    name: 'OWASP WebGoat (Java Benchmark)',
+    url: 'https://webgoat.owasp.org',
+    aliases: ['https://webgoat.herokuapp.com', 'http://webgoat.owasp.org'],
+    category: 'owasp',
+    badge: 'OWASP Benchmark (46%)',
+    description: 'OWASP standard training application for web application security vulnerabilities. Java and Spring Boot architecture.',
+    result: {
+      targetUrl: 'https://webgoat.owasp.org',
+      timestamp: new Date().toISOString(),
+      score: 46,
+      grade: 'D',
+      summary: {
+        critical: 2,
+        high: 2,
+        medium: 3,
+        low: 2,
+        info: 1,
+        totalPassed: 8
+      },
+      findings: [
+        {
+          id: 'WG-01',
+          title: 'Missing Content-Security-Policy Exposing Stored XSS',
+          severity: 'CRITICAL',
+          owaspCategory: 'A02:2025 - Security Misconfiguration',
+          asvsId: '1.2.1',
+          cwe: 'CWE-79',
+          passed: false,
+          description: 'No Content-Security-Policy header is served, permitting arbitrary script execution across lesson challenge frames.',
+          impact: 'Allows stored and reflected XSS payloads to execute unrestricted in visitor browser sessions.',
+          remediation: 'Configure a strict Content-Security-Policy header in Spring Security filter chain.',
+          codeSnippet: {
+            language: 'java',
+            vulnerable: '// Spring Security lacking CSP\nhttp.headers();',
+            remediated: 'http.headers(headers -> headers\n  .contentSecurityPolicy(csp -> csp\n    .policyDirectives("default-src \'self\'; frame-ancestors \'none\';")\n  )\n);'
+          }
+        },
+        {
+          id: 'WG-02',
+          title: 'Missing Strict-Transport-Security (HSTS) Header',
+          severity: 'HIGH',
+          owaspCategory: 'A04:2025 - Cryptographic Failures',
+          asvsId: '12.1.1',
+          cwe: 'CWE-319',
+          passed: false,
+          description: 'HSTS is not enforced, permitting initial connection attempts over unencrypted cleartext HTTP.',
+          impact: 'Users on insecure networks can be intercepted via SSL-stripping and credential sniffing.',
+          remediation: 'Enforce HSTS with max-age=31536000 and includeSubDomains.',
+          codeSnippet: {
+            language: 'java',
+            vulnerable: '// Lacking HSTS declaration\nserver.ssl.enabled=false;',
+            remediated: 'http.headers(headers -> headers\n  .httpStrictTransportSecurity(hsts -> hsts\n    .includeSubDomains(true)\n    .maxAgeInSeconds(31536000)\n  )\n);'
+          }
+        },
+        {
+          id: 'WG-03',
+          title: 'Missing X-Frame-Options Permitting Clickjacking',
+          severity: 'MEDIUM',
+          owaspCategory: 'A01:2025 - Broken Access Control & SSRF',
+          asvsId: '14.4.1',
+          cwe: 'CWE-1021',
+          passed: false,
+          description: 'WebGoat pages can be loaded within arbitrary third-party iframes without restrictions.',
+          impact: 'Vulnerable to UI redressing and clickjacking attacks deceiving users into triggering unauthorized state changes.',
+          remediation: 'Send "X-Frame-Options: DENY" or frame-ancestors in CSP.',
+          codeSnippet: {
+            language: 'http',
+            vulnerable: '# No X-Frame-Options header',
+            remediated: 'X-Frame-Options: DENY'
+          }
+        },
+        {
+          id: 'WG-04',
+          title: 'Detailed Server Banner Disclosure (Apache-Coyote)',
+          severity: 'LOW',
+          owaspCategory: 'A10:2025 - Exception Handling & Information Leakage',
+          asvsId: '16.5.1',
+          cwe: 'CWE-200',
+          passed: false,
+          description: 'The server returns "Server: Apache-Coyote/1.1", leaking the underlying Tomcat servlet container version.',
+          impact: 'Aids attackers in identifying vulnerable Tomcat versions and known container CVEs.',
+          remediation: 'Suppress server header in Tomcat server.xml (server="").',
+          codeSnippet: {
+            language: 'xml',
+            vulnerable: '<Connector port="8080" protocol="HTTP/1.1" />',
+            remediated: '<Connector port="8080" protocol="HTTP/1.1" server="" />'
+          }
+        }
+      ],
+      headerAudits: [
+        {
+          header: 'Content-Security-Policy',
+          status: 'missing',
+          recommendedValue: "default-src 'self'; frame-ancestors 'none';",
+          importance: 'critical',
+          description: 'Missing. Allows unrestricted inline script execution.'
+        },
+        {
+          header: 'Strict-Transport-Security (HSTS)',
+          status: 'missing',
+          recommendedValue: 'max-age=31536000; includeSubDomains',
+          importance: 'critical',
+          description: 'Missing transport layer encryption declaration.'
+        },
+        {
+          header: 'X-Frame-Options',
+          status: 'missing',
+          recommendedValue: 'DENY',
+          importance: 'high',
+          description: 'Missing. Vulnerable to iframe embedding and clickjacking.'
+        },
+        {
+          header: 'X-Content-Type-Options',
+          status: 'warning',
+          currentValue: 'nosniff',
+          recommendedValue: 'nosniff',
+          importance: 'high',
+          description: 'Active on some endpoints but inconsistent.'
+        },
+        {
+          header: 'Permissions-Policy',
+          status: 'missing',
+          recommendedValue: 'camera=(), microphone=()',
+          importance: 'medium',
+          description: 'Missing hardware feature restrictions.'
+        }
+      ],
+      owaspCompliance: [
+        { category: 'A01 - Broken Access Control & SSRF', score: 45, status: 'non-compliant' },
+        { category: 'A02 - Security Misconfiguration', score: 40, status: 'non-compliant' },
+        { category: 'A03 - Supply Chain Failures', score: 50, status: 'warning' },
+        { category: 'A04 - Cryptographic Failures', score: 45, status: 'non-compliant' },
+        { category: 'A05 - Injection', score: 40, status: 'non-compliant' },
+        { category: 'A06 - Insecure Design', score: 45, status: 'non-compliant' },
+        { category: 'A07 - Authentication Failures', score: 48, status: 'non-compliant' },
+        { category: 'A08 - Integrity Failures', score: 45, status: 'non-compliant' },
+        { category: 'A09 - Security Logging & Alerting', score: 35, status: 'non-compliant' },
+        { category: 'A10 - Exception Handling', score: 45, status: 'non-compliant' }
+      ],
+      asvsLevel1PassRate: 52,
+      asvsLevel2PassRate: 26
     }
   }
 ];

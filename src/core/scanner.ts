@@ -12,8 +12,24 @@ export async function runSecurityAudit(targetUrl: string, onProgress?: (step: st
     throw new Error(validation.error || 'Invalid target URL');
   }
 
-  // Check if target matches one of the presets
-  const matchedPreset = TARGET_PRESETS.find(p => p.url.toLowerCase() === validation.sanitizedUrl?.toLowerCase() || p.id === targetUrl);
+  // Check if target matches one of the presets or aliases
+  const sanitized = validation.sanitizedUrl?.toLowerCase() || '';
+  let sanitizedHost = '';
+  try {
+    sanitizedHost = sanitized ? new URL(sanitized).hostname.toLowerCase() : '';
+  } catch {}
+
+  const matchedPreset = TARGET_PRESETS.find(p => {
+    if (p.url.toLowerCase() === sanitized || p.id === targetUrl) return true;
+    if (p.aliases && p.aliases.some(a => a.toLowerCase() === sanitized)) return true;
+    if (sanitizedHost) {
+      try {
+        if (new URL(p.url).hostname.toLowerCase() === sanitizedHost) return true;
+        if (p.aliases && p.aliases.some(a => new URL(a).hostname.toLowerCase() === sanitizedHost)) return true;
+      } catch {}
+    }
+    return false;
+  });
   if (matchedPreset) {
     if (onProgress) onProgress('Evaluating HTTP security headers & CSP policy...', 40);
     await delay(300);
